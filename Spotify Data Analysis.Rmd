@@ -1,0 +1,787 @@
+
+
+---
+title: "Spotify Data Analysis"
+author: "Kriti Singh"
+date: "2022-07-08"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(reticulate)
+# virtualenv_create('venv')
+# py_install("pandas",envname = "venv")
+# py_install("seaborn",envname = "venv")
+# py_install("yellowbrick",envname = "venv")
+# py_install("sklearn",envname = "venv")
+use_virtualenv("venv")
+py_available(TRUE)
+```
+
+## Problem Statement
+
+Determining what categories (clusters) of songs have been released during the pandemic and how they performed during this particular time period.
+
+**Objective:**
+
+Points taken into consideration while designing your solution in R and Python:
+-	What measures would you report to describe this dataset? 
+-	Would you engineer any particular features ahead of your analysis?
+-	Would you pre-process the data in any particular way?
+-	How would you cluster this dataset and why?
+	  - K -means model to identify the most popular songs
+	  - which genres are popular
+	  - audio features/attributes performance across clusters 
+-	Create one (max two) key visualisations that you believe would contain the most insights for the client
+
+**Approach:**
+
+1. Preprocessing of Data and Feature Engineering
+2. Exploratory Data Analysis
+	 - Visualisation techniques for audio features and behaviour analysis
+	 - Feature Correlation with Dependent variable
+	 - Bivariate Analysis
+	 - Statistical Analysis on variable behavioural :
+	    - Pearson's Chi square testing for categorical variables
+	    - Correlation plot for numeric variables
+3. K - Means Clustering to understand popularity of songs 
+4. Result Analysis
+
+Importing Packages
+```{r}
+#Importing all the libraries
+library(knitr)
+#install.packages("kableExtra", dependencies = TRUE)
+library(kableExtra)
+#install.packages("DT", dependencies = TRUE)
+library(magrittr)
+#install.packages("magrittr", dependencies = TRUE)
+library(DT)
+#install.packages(summarytools)
+library(summarytools)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+
+library(ggplot2)
+library(GGally)
+library(RColorBrewer)
+library(viridis)
+library(gridExtra)
+library(fpc)
+library(factoextra)
+```
+
+
+```{python}
+import numpy as np
+import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
+import matplotlib.pyplot as plt 
+import seaborn as sns 
+from yellowbrick.target import FeatureCorrelation
+
+import warnings
+warnings.filterwarnings("ignore")
+color = sns.color_palette()
+color_pal = [x['color'] for x in plt.rcParams['axes.prop_cycle']]
+```
+
+## Importing data
+```{r}
+# Loading the data
+spotify_all <- read.csv("spotify_songs copy.csv", sep=",", 
+                comment.char = "",check.names = FALSE, quote="\"",
+                na.strings=c("NA","NaN", " ") )
+spotify <- subset(spotify_all, track_album_release_date >= "2019-12-01")
+spotifyAllCol <- spotify
+# About the data
+dim(spotify)
+```
+
+
+## Data Statistics Description
+```{r}
+print(dfSummary(spotify), method = 'render') 
+```
+## Data Wrangling
+### Missing values
+```{r}
+colSums(is.na(spotify))
+```
+### Column Encoding using label encoding 
+
+From the data summary, we have playlist_genre with 6 distinct levels, playlist_subgenre with 24 distinct level, 12 keys, and two modes
+
+We would transform the above attributes to factors and also fix some other attributes
+```{r}
+#Changing Data Types
+spotify <- spotify %>% 
+  mutate(
+  track_name =  as.factor(spotify$track_name),
+  track_artist = as.factor(spotify$track_artist),
+  playlist_genre = as.factor(spotify$playlist_genre),
+  playlist_subgenre = as.factor(spotify$playlist_subgenre),
+  key = as.factor(spotify$key),
+  mode = as.factor(spotify$mode),
+  track_popularity = as.numeric(spotify$track_popularity),
+  duration_ms = as.numeric(spotify$duration_ms)
+  )
+```
+### Feature Engineering
+The duration of tracks is in milliseconds, therefore we would convert them into suitable categories based on the quantiles. 
+
+```{r}
+# hrs = spotify$duration_ms/(60 * 60 * 1000)
+# mins = (duration_ms/(60 * 60 * 1000) %% 1) * 60
+# c(2.807, 3.209, 3.618)
+# spotify = spotify %>% mutate(duration_cat = (duration_ms/(60 * 60 * 1000) %% 1) * 60 )
+spotify[["duration_hrs"]] <- spotify[["duration_ms"]]/(60 * 60 * 1000)
+spotify[["duration_mins"]] <- (spotify[["duration_hrs"]]%% 1)*60
+spotify[["duration_cat"]] <- findInterval(spotify[["duration_mins"]], c(1,3,5))
+spotify[["duration_hrs"]]<-NULL
+spotify[["duration_mins"]]<-NULL
+spotify <- spotify %>% 
+  mutate(duration_cat = as.factor(spotify$duration_cat)
+  )
+```
+
+
+```{r}
+p1 <- ggplot(spotify, aes(x=factor(playlist_genre),fill=playlist_genre)) +
+  geom_bar() + scale_fill_brewer(palette="Spectral") + 
+  theme(legend.position="none")
+p2 <- ggplot(spotify, aes(y=factor(playlist_subgenre),fill=playlist_genre)) +
+  geom_bar() + scale_fill_brewer(palette="Spectral") + 
+  theme(legend.position="none")
+p3 <- ggplot(spotify, aes(x=factor(key),fill=key)) + geom_bar() + 
+  scale_fill_brewer(palette="Spectral") + theme(legend.position="none")
+p4 <- ggplot(spotify, aes(x=factor(mode),fill=mode)) + geom_bar() + 
+  scale_fill_brewer(palette="Spectral") + theme(legend.position="none")
+p5 <- ggplot(spotify, aes(x=factor(duration_cat),fill=duration_cat)) + 
+  geom_bar() + scale_fill_brewer(palette="Spectral") + 
+  theme(legend.position="none")
+grid.arrange(p1,p2,p3,p4,p5,nrow=3,ncol=2)
+```
+Now, the variables Track_id, track_album_id, track_album_name, sub genre are not important to the analysis and hence they are dropped.
+
+```{r}
+colnames(spotify)
+```
+
+
+```{r}
+spotify <- spotify %>% select(2,3,4,10,12:24)
+```
+
+### Data Wrangling Result
+
+The cleaned dataset has 1963 observations of 16 variables
+```{r}
+str(spotify)
+```
+
+## Exploratory Data Analysis
+
+### Data Distribution 
+
+Danceability, energy, loudness, tempo, track_popularity, valence are normally distributed and rest attributes have skewness in some form.
+```{r}
+#Plotting numeric values
+spotify %>%
+  keep(is.numeric) %>% #hist only for numeric
+  gather() %>% #converts to key value
+  ggplot(aes(value, fill = key)) + 
+  facet_wrap(~ key, scales = "free") +
+  geom_histogram(alpha = 0.7, bins = 30) + 
+  ggtitle("Distribution of Audio Attributes") + 
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE)) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+Similar kind of result we observe from the box-plot
+
+```{r}
+#Boxplot for numeric values
+spotify %>%
+  keep(is.numeric) %>% #hist only for numeric
+  gather() %>% #converts to key value
+  ggplot(aes(value, fill = key)) + 
+  facet_wrap(~ key, scales = "free") +
+  geom_boxplot(alpha = 0.7) + 
+  ggtitle("Boxplots of Attributes") + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_flip()
+```
+### Feature Correlation
+Feature Correlation of different attributes w.r.t  track_popularity 
+
+```{python}
+feature_names = ['acousticness', 'danceability', 'energy', 'instrumentalness',
+       'liveness', 'loudness', 'speechiness', 'tempo', 'valence','duration_ms','key','mode']
+
+X, y = r.spotifyAllCol[feature_names], r.spotifyAllCol['track_popularity']
+
+# Create a list of the feature names
+
+features = np.array(feature_names)
+
+# Instantiate the visualizer
+visualizer = FeatureCorrelation(labels=features)
+
+plt.rcParams['figure.figsize']=(10,10)
+visualizer.fit(X, y)        # Fit the data to the visualizer
+visualizer.show()       
+```
+We have 6 features with +ve correlation and 6 -ve w.r.t track_popularity. 
+
+```{r}
+total <- dim(spotifyAllCol)[1]
+
+popularity_score_more_than_50 <- dim(subset(spotifyAllCol, track_popularity > 50))[1]
+
+probability <- (popularity_score_more_than_50/total)*100
+sprintf("Probability of song getting more than 50 in popularity :%f", probability)
+
+```
+so popularity ranges from 0 to 100 ... so Probability of song getting more than 50 is just 48.35. 
+
+### Bivariate analysis
+
+"Loudness" of the song VS "popularity" with size "key" and for a binary attributes "mode" of the song.
+
+**Loudness VS Popularity**
+
+
+```{python}
+fig1 = sns.jointplot(x="loudness", y="track_popularity", data=r.spotifyAllCol,
+                  kind="kde", truncate=False,
+                  color=color[1])
+plt.show()
+```
+
+Good this Loudness have good relation with popularity .. well loud songs get more popularity !!
+
+```{python}
+cmap_ = sns.cubehelix_palette(rot=-1, as_cmap=True)
+g = sns.relplot(
+    data=r.spotifyAllCol,
+    x="loudness", y="track_popularity",
+    hue="key",size="key",col="mode",
+    palette=cmap_, sizes=(10, 200),
+)
+
+g.despine(left=True, bottom=True)
+```
+
+For both modes, at higher key notes, the loudness and track_popularity find a good cluster.
+
+**Genres Analysis**
+
+From below plot, it can be seen that the maximum number of songs belong to:
+
+ - EDM 
+ - Rap 
+ - Latin 
+ - Pop
+
+```{r}
+p1 <- ggplot(spotify, aes(x=factor(playlist_genre))) +
+      geom_bar(width=0.7, 
+           aes(fill=playlist_genre), 
+           alpha=0.7) + 
+      scale_fill_brewer(palette = "Paired") + 
+      ggtitle("Genre Count") + 
+      theme(plot.title = element_text(hjust = 0.5)) + 
+      xlab("Genre")
+grid.arrange(p1, nrow=1, ncol=1)
+```
+Since based on the genres audio characteristics will modify by key used where all keys on octave encoded as values ranging from 0 to 11, starting on C as 0, C# as 1 and so on. Thus, analysing these audio characteristics  like "acousticness", "danceability", "speechiness", "energy" and "valence" whose values ranges between 0 and 1.
+
+```{python}
+df_edm = r.spotifyAllCol[r.spotifyAllCol['playlist_genre'] == "edm"]
+df_rap = r.spotifyAllCol[r.spotifyAllCol['playlist_genre'] == "rap"]
+df_latin = r.spotifyAllCol[r.spotifyAllCol['playlist_genre'] == "latin"]
+df_pop = r.spotifyAllCol[r.spotifyAllCol['playlist_genre'] == "pop"]
+```
+
+```{python}
+#so lets check all the audio characteristics with top 4 geners 
+# first lets start with "EDM" which is on TOP 1
+fig,ax = plt.subplots(figsize=(20, 10))
+sns.despine(fig, left=True, bottom=True)
+# sns.set_context("notebook", font_scale=2, rc={"lines.linewidth": 3})
+
+sns.lineplot(x="key", y="acousticness", data=df_edm, color="b",label = 'acousticness')
+sns.lineplot(x="key", y="danceability", data=df_edm, color="r",label = 'danceability')
+sns.lineplot(x="key", y="speechiness", data=df_edm, color="g",label = 'speechiness')
+sns.lineplot(x="key", y="energy", data=df_edm, color="y",label = 'energy')
+sns.lineplot(x="key", y="valence", data=df_edm, color="m",label = 'valence')
+
+plt.rcParams["xtick.labelsize"] = 15
+
+ax.set_title('Audio characteristics of genres "EDM" data by the Key used')
+ax.legend(fontsize = 14)
+plt.show()
+# now lets check for top2 genre that is RAP
+
+fig,ax = plt.subplots(figsize=(20, 10))
+sns.despine(fig, left=True, bottom=True)
+# sns.set_context("notebook", font_scale=2, rc={"lines.linewidth": 3})
+
+sns.lineplot(x="key", y="acousticness", data=df_rap, color="b",label = 'acousticness')
+sns.lineplot(x="key", y="danceability", data=df_rap, color="r",label = 'danceability')
+sns.lineplot(x="key", y="speechiness", data=df_rap, color="g",label = 'speechiness')
+sns.lineplot(x="key", y="energy", data=df_rap, color="y",label = 'energy')
+sns.lineplot(x="key", y="valence", data=df_rap, color="m",label = 'valence')
+
+plt.rcParams["xtick.labelsize"] = 15
+
+ax.set_title('Audio characteristics of genres "RAP" data by the Key used')
+ax.legend(fontsize = 14)
+plt.show()
+# now lets check for top3 genre that is latin
+fig,ax = plt.subplots(figsize=(20, 10))
+sns.despine(fig, left=True, bottom=True)
+# sns.set_context("notebook", font_scale=2, rc={"lines.linewidth":3})
+
+sns.lineplot(x="key", y="acousticness", data=df_latin, color="b", label = 'acousticness')
+sns.lineplot(x="key", y="danceability", data=df_latin, color="r", label = 'danceability')
+sns.lineplot(x="key", y="speechiness", data=df_latin, color="g", label = 'speechiness')
+sns.lineplot(x="key", y="energy", data=df_latin, color="y", label = 'energy')
+sns.lineplot(x="key", y="valence", data=df_latin, color="m", label = 'valence')
+
+plt.rcParams["xtick.labelsize"] = 15
+
+ax.set_title('Audio characteristics of genres "latin" data by the Key used')
+ax.legend(fontsize=14)
+plt.show()
+# now lets check for top3 gener that is POP 
+fig,ax = plt.subplots(figsize=(20, 10))
+sns.despine(fig, left=True, bottom=True)
+# sns.set_context("notebook", font_scale=2, rc={"lines.linewidth":3})
+
+sns.lineplot(x="key", y="acousticness", data=df_pop, color="b", label = 'acousticness')
+sns.lineplot(x="key", y="danceability", data=df_pop, color="r", label = 'danceability')
+sns.lineplot(x="key", y="speechiness", data=df_pop, color="g", label = 'speechiness')
+sns.lineplot(x="key", y="energy", data=df_pop, color="y", label = 'energy')
+sns.lineplot(x="key", y="valence", data=df_pop, color="m", label = 'valence')
+
+plt.rcParams["xtick.labelsize"] = 15
+
+ax.set_title('Audio characteristics of genres POP data by the Key used')
+ax.legend(fontsize=14)
+plt.show()
+```
+
+To understand genres better, genres are plotted by their average popularity. From below plot, it can be seen that the maximum number of popular songs belong to :
+
+ - Pop 
+ - Latin 
+ - Rap
+
+Hence in cluster analysis, the focus can be seen on these genres.
+```{r}
+avg_popularity <- spotify %>% 
+                  select(track_popularity, playlist_genre) %>% 
+                  group_by(playlist_genre) %>% 
+                  summarise("average_popularity" = round(mean(track_popularity)))
+
+p2 <- ggplot(data=avg_popularity, 
+             mapping = aes(x = (playlist_genre), 
+                           y = average_popularity, 
+                           fill = playlist_genre)) + 
+      geom_col(width = 0.7,alpha=0.7) + 
+      scale_fill_brewer(palette = "Paired") + 
+      ggtitle("Plot 2 : Genres & Popularity") + 
+      xlab("Genre") + ylab("Mean Popularity") + 
+      theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(p2, nrow=1, ncol=1)
+```
+
+**Keys & Mode**
+
+In music “key” is short for “key signature” and refers to an ascending series of notes that will be used in a melody, and to the number of sharps or flats in the scale.
+
+But will a mode enhance the key?
+
+To understand keys & mode better,a chi square test on them reveal information as they are categorical variables
+
+Ho : Key is independent of mode
+Ha : Key is not independent of mode
+On applying the chisq.test function on the two variables, the p-value is found to be lesser than 2.2e-16, which is too significant for an α of 0.05.
+
+Hence, the null hypothesis is rejected.
+
+Therefore, the key is dependent on mode, and the mode will sharpen the keys.
+```{r}
+chisq.test(spotify$key, spotify$mode)
+```
+
+From the chart below it is seen that songs have mode 1 (major track) more often than mode 2(minor track).
+
+Pitch 1 is the most frequenly key occuring in songs
+
+```{r}
+#Plotting Mode & Keys
+
+g1 <- ggplot(spotify,aes(mode)) + 
+      geom_bar(aes(fill=mode),alpha = 0.6) + 
+      ggtitle("Modes") +
+      theme(plot.title = element_text(hjust = 0.5)) + 
+      scale_fill_brewer(palette = "Dark2")
+g2 <- ggplot(spotify,aes(key)) + 
+      geom_bar(aes(fill=key), alpha = 0.6) + 
+      ggtitle("Keys") +
+      theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(g1,g2,ncol=1)
+```
+
+```{python}
+r.spotifyAllCol['track_artist'].value_counts()[0:5].plot.barh()
+```
+
+## Approach for Clustering:
+
+- 70% of the data is split as train set and rest 30% as test set.
+- The data is scaled to make the numerical attributes comparable
+- Understand behaviour of numerical attributes from the correlation plot
+- Find the optimal number of centers using elbow method to implement K-Means Clustering
+- Fit the K Means Clustering Model
+- Group the clusters and the attributes by their mean
+- Understand the accuracy of the model
+- In-depth analysis cluster wise
+- Interpretation of Model and Results
+
+
+```{r}
+spotify <- spotify %>% select(1:15,17)
+#Splitting Data into Train & Test
+index <- sample(nrow(spotify), 0.7*nrow(spotify))
+train_kmeans <- spotify[index,]
+test_kmeans <- spotify[-index,]
+
+```
+Standardization is an important step in data preprocessing, as it controls the variability of the dataset. It is used to limit the values between -1 and 1 for numeric columns. Therefore, I have scaled the data before implementing K-Means Clustering.
+```{r}
+#Scaling Data
+train_scale <- scale(train_kmeans[,-c(1,2,4,7,9,16)])
+test_scale <- scale(test_kmeans[,-c(1,2,4,7,9,16)])
+```
+```{r}
+colnames(train_kmeans)
+```
+
+### Correlation Plot Insights:
+
+The plot below gives the following top few insights:
+
+Energy has a high positive correlation with loudness and a negative correlation with acousticness. It is also positively related to liveness
+Like energy, loudness and tempo are negatively related with acoustiness, i.e as acousticness increases, loudness and tempo decrease.
+Therefore, as expected popularity is negatively correlated with energy, liveness, instrumentalness and positively associated with danceability, loudness and acousticness
+Valence and Danceability have a positive relation
+
+```{r}
+# Correlation Plot 
+ggcorr(train_scale, 
+       low = "blue3", 
+       high = "red") + 
+      ggtitle("Correlation Plot") + 
+      theme(plot.title = element_text(hjust = 0.5))
+```
+
+K-Means clustering is a simple and quick algorithm which deals with large data sets easily.
+
+The idea behind K-Means is in grouping the data into clusters such that the variation inside the clusters (also known as total within-cluster sum of square or WSS) is minimum, and the variation within the clusters is maximum.
+
+This helps in understanding which songs tend to be popular in which groups
+
+### General K-Means Process
+
+Identify the number of clusters (K) to be created, in this analysis Elbow Method has been used for the same
+Select optimally identified k objects from the data set as the cluster centers and fit the kmeans model
+Plot the clusters
+Measure the accuracy
+Elbow method
+
+One reason for using this method is that it chooses the correct number of clusters over random assignment of samples to clusters.
+
+In this method, a wss curve is plotted according to the number of clusters k. The location of a bend (knee) in the plot is considered as an indicator of the appropriate number of clusters.
+
+With the elbow method, the ideal number of clusters are identified as 3. Therefore kmeans is implemented with 3 centers.
+
+The total within-cluster sum of square (wss) measures the compactness of the clustering and we want it to be as small as possible.
+
+```{r}
+#Elbow Method
+
+wss <- (nrow(train_scale)-1)*sum(apply(train_scale,2,var))
+
+for (i in 2:15) wss[i] <- sum(kmeans(train_scale,centers=i)$withinss)
+plot(1:15, wss, type="b", pch=20, frame = FALSE, xlab="Number of Clusters K",ylab="Total WSS",main="Optimal Number of Clusters")
+```
+### Fitting K Means Model
+
+The k means model is fit with 3 centers, while nstart = 25 generates 25 initial configurations and gives out the best one.
+
+As seen from the output this model results in 3 clusters of sizes 7750, 10932, 4297
+
+```{r}
+#Fit kmeans
+set.seed(13437885)
+fit <- kmeans(train_scale, centers = 3, nstart = 25)
+fit$size
+```
+
+```{r}
+#Plotting Kmeans
+fviz_cluster(fit, 
+             geom = c("point", "text"),  
+             data = train_scale, 
+             palette = "Set3",
+             main = "K Means Clustering with 3 Centers", 
+             alpha = 0.9) + theme(plot.title = element_text(hjust = 0.5))
+```
+The clusters are extracted and added to the data to do some descriptive statistics at the cluster level. The datatable below is a result of clustering.
+
+The right most column depicts the cluster the songs belong to, and this will help in further analysis to understand the features of the clusters.
+
+```{r}
+#Assiging cluster to df
+train_kmeans$cluster <- as.factor(fit$cluster)
+datatable(head(train_kmeans,5),options = list(dom = 't',scrollX = T,autoWidth = TRUE))
+```
+### Interpreting the Quality of Clusters
+
+The BSS is 51208.72.
+
+Between Sum of Squares gives the sum of the squared distance between various cluster centers.
+The higher it is, the better it is as we want the different cluster centers far apart from each other.
+A large BSS implies that the characteristics of the clusters are unique and very obviously identifiable.
+```{r}
+round(fit$betweenss,2)
+```
+The idea is to maximize the `bss/tss%`.
+To get a high value, we need to increase the number of clusters. But in this case, we found the number of clusters to be ideal at 3, hence we’ll stay at it.
+```{r}
+round((fit$betweenss / fit$totss * 100),2)
+```
+
+### Prediction Strength
+
+The prediction strength is defined according to Tibshirani and Walther (2005), who recommend to choose as optimal number of cluster the largest number of clusters that leads to a prediction strength above 0.8 or 0.9.
+
+This function computes the prediction strength of a clustering of a dataset into different numbers of components.
+The largest cutoff for clusters is 3, hence though there’s a low bss/tss% we continue with 3 clusters.
+The prediction strength for the clusters is decent as it is above 0.5 for all clusters
+```{r}
+#Prediction Strength
+prediction.strength(train_scale, Gmin=2, Gmax=5, M=10,cutoff=0.6)
+```
+
+### Cluster Behaviour Analysis
+
+The behaviours of the clusters can be outlined as below:
+
+- Cluster 1: Liveness, Energy
+- Cluster 1 is second largest
+- Cluster 2: Track Popularity, Danceability, Energy, Valence
+- Cluster 2 is the largest
+- Cluster 3: Acousticness, danceability
+- Cluster 3 is the smallest
+
+Accousticness and energy vary drastically across the clusters. Hence it will be used in final analysis
+Popularity of cluster 2 is the highest, followed by cluster 3 and finally cluster 1, but popularity doesn’t really distinguish the clusters
+Similarly danceability is not too distinct amongst the clusters
+Cluster 1 songs are ranked high on energy
+Valence is an important virtue for cluster 2
+Accousticness is the highest and only significant for cluster 3
+```{r}
+#Grouping the Clusters by Mean
+cluster_mean <- train_kmeans %>%
+                group_by(cluster) %>% 
+                summarise_if(is.numeric, "mean") %>% 
+                mutate_if(is.numeric, .funs = "round", digits = 2)
+
+datatable(cluster_mean, options = list(dom = 't',scrollX = T,autoWidth = TRUE))
+```
+
+```{r}
+#Bar Plots for Clusters
+b1 <- train_kmeans %>% 
+      ggplot(aes(x = cluster, 
+      y = energy, 
+      fill = cluster)) +
+      geom_boxplot() + 
+      scale_fill_viridis(option = "D",discrete = TRUE, alpha=0.5) + 
+      ggtitle("Clusters and Energy") + 
+      theme(plot.title = element_text(hjust = 0.5))
+
+b2 <- train_kmeans %>% 
+      ggplot(aes(x = cluster, 
+      y = acousticness, 
+      fill = cluster)) +
+      geom_boxplot() + 
+      scale_fill_viridis(option = "D",discrete = TRUE, alpha=0.5) + 
+      ggtitle("Clusters and Acousticness") + 
+      theme(plot.title = element_text(hjust = 0.5))
+
+b3 <- train_kmeans %>% 
+      ggplot(aes(x = cluster, 
+      y = danceability, 
+      fill = cluster)) +
+      geom_boxplot() + 
+      scale_fill_viridis(option = "D",discrete = TRUE, alpha=0.5) + 
+      ggtitle("Clusters and Danceability") + 
+      theme(plot.title = element_text(hjust = 0.5))
+
+b4 <- train_kmeans %>% 
+      ggplot(aes(x = cluster, 
+      y = valence, 
+      fill = cluster)) +
+      geom_boxplot() + 
+      scale_fill_viridis(option = "D",discrete = TRUE, alpha=0.5) + 
+      ggtitle("Clusters and Valence") + 
+      theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(b1, b2, b3, b4, nrow=2, ncol=2)
+
+```
+### Individual Cluster Analysis
+
+For the cluster analysis a baseline for popularity is kept at 90 and above. The popular songs in this cluster are depicted in the table below
+
+**Cluster 1 Insights:**
+
+Cluster 1 the second largest of the 3 clusters is known for its Liveness, Energy. Since, Pop, rock and rap are the most popular ones, the table for cluster 1 will be based on those.
+
+As expected, most popular songs in cluster 1 are high on energy and low on accousticness
+```{r}
+#Analysis on Cluster 1
+c1 <- train_kmeans[which(train_kmeans$cluster==1), ]
+
+#Grouping cluster by popularity
+avg_pop <- c1 %>% 
+          select(track_popularity, playlist_genre) %>% 
+          group_by(playlist_genre) %>% 
+          summarise("average_popularity" = round(mean(track_popularity)))
+
+#Plotting genres across popularity
+x1 <- ggplot(data=avg_pop, 
+             mapping = aes(x = (playlist_genre), 
+                           y = average_popularity, 
+                           fill = playlist_genre)) + 
+      geom_col(width = 0.7,alpha=0.7) + 
+      scale_fill_brewer(palette = "Spectral") + 
+      ggtitle("Cluster 1 - Genres & Popularity") + 
+      xlab("Genre") + ylab("Mean Popularity") + 
+      theme(plot.title = element_text(hjust = 0.5))
+x1
+```
+
+```{r}
+n <- c1 %>% 
+  select(track_name,track_artist,playlist_genre,acousticness,energy,track_popularity) %>% 
+  subset(track_popularity >= 70 & playlist_genre %in% c("rap","rock","pop")) %>% 
+  distinct(track_name,.keep_all = TRUE) 
+
+datatable(n, caption = 'Cluster 1: Top Songs', options = list(scrollX = T, autoWidth = TRUE, order = list((list(6, 'desc')))))
+```
+**Cluster 2 Insights:**
+
+Cluster 2 has the most popular tracks purely coz of the size, and its tracks also have the highest Danceability, Energy, Valence
+
+Therfore the most popular genres are - pop,latin,rock
+
+The cluster two songs are high on energy and low on acousticness.
+
+```{r}
+#Analysis on Cluster 2
+c2 <- train_kmeans[which(train_kmeans$cluster==2), ]
+
+#Grouping cluster by popularity
+avg_pop <- c2 %>% 
+          select(track_popularity, playlist_genre) %>% 
+          group_by(playlist_genre) %>% 
+          summarise("average_popularity" = round(mean(track_popularity)))
+
+#Plotting genres across popularity
+x2 <- ggplot(data=avg_pop, 
+             mapping = aes(x = (playlist_genre), 
+                           y = average_popularity, 
+                           fill = playlist_genre)) + 
+      geom_col(width = 0.7,alpha=0.7) + 
+      scale_fill_brewer(palette = "Spectral") + 
+      ggtitle("Cluster 2 - Genres & Popularity") + 
+      xlab("Genre") + ylab("Mean Popularity") + 
+      theme(plot.title = element_text(hjust = 0.5))
+x2
+```
+
+```{r}
+n <- c2 %>% 
+  select(track_name,track_artist,playlist_genre,acousticness,energy,track_popularity) %>% 
+  subset(track_popularity >= 70 & playlist_genre %in% c("latin","rock","pop","rap")) %>% 
+  distinct(track_name,.keep_all = TRUE) 
+
+datatable(n, caption = 'Cluster 2: Top Songs', options = list(scrollX = T, autoWidth = TRUE, order = list((list(6, 'desc')))))
+```
+
+**Cluster 3 Insights**
+
+Cluster 3 is the smallest and its tracks have the attributes of high acousticness, danceability and mid level energy compared to other clusters.
+
+Therfore the most popular genres are - pop,latin,rap
+
+The popular songs are high on acousticness with average energy.
+```{r}
+#Analysis on Cluster 3
+c3 <- train_kmeans[which(train_kmeans$cluster==3), ]
+
+#Grouping cluster by popularity
+avg_pop <- c3 %>% 
+          select(track_popularity, playlist_genre) %>% 
+          group_by(playlist_genre) %>% 
+          summarise("average_popularity" = round(mean(track_popularity)))
+
+#Plotting genres across popularity
+x3 <- ggplot(data=avg_pop, 
+             mapping = aes(x = (playlist_genre), 
+                           y = average_popularity, 
+                           fill = playlist_genre)) + 
+      geom_col(width = 0.7,alpha=0.7) + 
+      scale_fill_brewer(palette = "Spectral") + 
+      ggtitle("Cluster 3 - Genres & Popularity") + 
+      xlab("Genre") + ylab("Mean Popularity") + 
+      theme(plot.title = element_text(hjust = 0.5))
+x3
+```
+
+```{r}
+n <- c3 %>% 
+  select(track_name,track_artist,playlist_genre,acousticness,energy,track_popularity) %>% 
+  subset(track_popularity >= 70 & playlist_genre %in% c("latin","rap","pop","r&b")) %>% 
+  distinct(track_name,.keep_all = TRUE) 
+
+datatable(n, caption = 'Cluster 3: Top Songs', options = list(scrollX = T, autoWidth = TRUE, order = list((list(6, 'desc')))))
+```
+
+## Summary:
+
+This analysis was aimed to understand what makes the clusters different from each other, which also lead us to top songs in each category
+The analysis was achieved through Visual Exploration, Statistical testing and K means clustering to arrive at the below takeways
+To a consumer, this analysis will give an overview on the kind of music he should be followinf on spotify based on his tastes.
+
+**Key Takeways:**
+
+The three clusters do not vary too much on popularity, but instead vary highly on energy and acousticness.
+The most popular genres turn out to be - Pop, Latin and Rock
+Cluster two with low acousticness, mid level energy has the the most number of popular songs. One reason for it can be the high danceability associated with cluster 2.
+
+**Limitations:**
+
+The K clusters were chosen only on elbow method due to its reputation. But an attempt at Gap static and Silhoutte method, would enhance the quality of the analysis.
+This analysis does not cover predicting popularity of a song, which would be a good project in its own.
