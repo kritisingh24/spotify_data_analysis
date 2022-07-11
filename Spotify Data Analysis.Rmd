@@ -5,8 +5,9 @@ title: "Spotify Data Analysis"
 author: "Kriti Singh"
 date: "2022-07-08"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
+always_allow_html: true
 ---
 
 ```{r setup, include=FALSE}
